@@ -17,11 +17,25 @@ DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 APP_MODE_ENV_VAR = "APP_MODE"
 
 
+def _get_streamlit_app_mode() -> object | None:
+    """Read APP_MODE from Streamlit secrets without requiring a secrets file."""
+
+    try:
+        import streamlit as st
+
+        return st.secrets[APP_MODE_ENV_VAR]
+    except Exception:
+        return None
+
+
 def get_app_mode() -> Literal["local", "demo"]:
     """Return the configured runtime mode, defaulting safely to local."""
 
-    configured = os.getenv(APP_MODE_ENV_VAR, "").strip().lower()
-    return "demo" if configured == "demo" else "local"
+    configured = os.getenv(APP_MODE_ENV_VAR)
+    if configured is None:
+        configured = _get_streamlit_app_mode()
+    normalized = str(configured or "").strip().lower()
+    return "demo" if normalized == "demo" else "local"
 
 REQUIRED_COLUMNS = ("question", "answer")
 OPTIONAL_COLUMNS = ("expected_answer", "context", "id")

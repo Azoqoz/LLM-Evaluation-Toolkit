@@ -1,6 +1,7 @@
 """Runtime mode configuration and rendering tests."""
 
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from src.config.settings import get_app_mode
@@ -28,6 +29,39 @@ def test_app_mode_defaults_to_local_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("APP_MODE", raising=False)
+    monkeypatch.setattr(st, "secrets", {})
+    assert get_app_mode() == "local"
+
+
+def test_environment_app_mode_takes_priority_over_streamlit_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APP_MODE", "local")
+    monkeypatch.setattr(st, "secrets", {"APP_MODE": "demo"})
+    assert get_app_mode() == "local"
+
+
+def test_streamlit_secret_is_used_when_environment_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APP_MODE", raising=False)
+    monkeypatch.setattr(st, "secrets", {"APP_MODE": "Demo"})
+    assert get_app_mode() == "demo"
+
+
+def test_missing_streamlit_secret_defaults_to_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APP_MODE", raising=False)
+    monkeypatch.setattr(st, "secrets", {})
+    assert get_app_mode() == "local"
+
+
+def test_invalid_streamlit_secret_defaults_to_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APP_MODE", raising=False)
+    monkeypatch.setattr(st, "secrets", {"APP_MODE": "invalid-value"})
     assert get_app_mode() == "local"
 
 
