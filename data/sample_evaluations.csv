@@ -1,0 +1,7 @@
+id,question,answer,expected_answer,context
+demo-001,What is the capital of Saudi Arabia?,Riyadh is the capital of Saudi Arabia.,The capital of Saudi Arabia is Riyadh.,Riyadh is the capital and largest city of Saudi Arabia.
+demo-002,What is the capital of Saudi Arabia?,Jeddah is the capital of Saudi Arabia.,The capital of Saudi Arabia is Riyadh.,Riyadh is the capital and largest city of Saudi Arabia.
+demo-003,How long is the return period?,Customers can return the product within two weeks.,The return period is 14 days.,Customers may return products within 14 days of purchase.
+demo-004,What gas do plants absorb from the atmosphere?,What gas do plants absorb from the atmosphere?,,
+demo-005,What is the capital of France?,I cannot answer that request.,The capital of France is Paris.,Paris is the capital and largest city of France.
+demo-006,What does CPU stand for?,Central Processing Unit.,Central Processing Unit.,
