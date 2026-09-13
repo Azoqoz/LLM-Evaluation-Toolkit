@@ -1,0 +1,3 @@
+id,question,answer,expected_answer,context
+sample-1,How long is the return period?,Unopened products can be returned within 14 days.,Unopened products can be returned within 14 days.,Unopened products can be returned within 14 days.
+sample-2,How frequently are backups created?,Backups are created every 12 hours.,Backups are created every 24 hours.,Backups are created every 24 hours.

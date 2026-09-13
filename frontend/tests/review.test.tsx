@@ -1,0 +1,162 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, expect, it, vi } from "vitest";
+import { ReviewRoom } from "@/components/review-room";
+import { ReviewResult } from "@/components/review-result";
+import { BatchReport } from "@/components/batch-review";
+import { api } from "@/lib/api";
+import { ReviewError } from "@/lib/errors";
+import { batch, capabilities, demo, result } from "./fixtures";
+
+vi.mock("@/lib/api", () => ({ api: { connect: vi.fn(), evaluate: vi.fn(), batch: vi.fn(), benchmark: vi.fn() } }));
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.connect).mockResolvedValue(capabilities); vi.mocked(api.evaluate).mockResolvedValue(result); vi.mocked(api.batch).mockResolvedValue(batch); vi.mocked(api.benchmark).mockResolvedValue(batch); });
+
+it.each(["Pass", "Fail"] as const)("renders the backend %s verdict and exact reviewer note", status => {
+  render(<ReviewResult result={{ ...result, status }} />);
+  expect(screen.getByText(status.toUpperCase(), { exact: false, selector: ".verdict-stamp" })).toBeInTheDocument();
+  expect(screen.getByText("80", { selector: "strong" })).toBeInTheDocument();
+  expect(screen.getAllByText("N/A")).toHaveLength(2);
+  expect(screen.getByText(result.improvement_feedback)).toBeInTheDocument();
+  expect(screen.getByText("No expected answer supplied")).toBeInTheDocument();
+});
+it("connects to Local Mode and submits free-form input with optional references", async () => {
+  const user = userEvent.setup(); render(<ReviewRoom />);
+  await screen.findByText("LOCAL MODE");
+  await user.type(screen.getByRole("textbox", { name: "Question" }), "What is the return period?");
+  await user.type(screen.getByRole("textbox", { name: "Model response" }), "Returns are accepted within 14 days.");
+  await user.click(screen.getByText("Reference material"));
+  await user.type(screen.getByRole("textbox", { name: "Expected answer" }), "14 days");
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Pass threshold" }), { target: { value: "80.01" } });
+  await user.click(screen.getByRole("button", { name: "Evaluate response" }));
+  await screen.findByRole("article", { name: "Evaluation result" });
+  expect(api.evaluate).toHaveBeenCalledWith(expect.objectContaining({ question: "What is the return period?", answer: "Returns are accepted within 14 days.", expected_answer: "14 days", context: "", pass_threshold: 80.01 }), expect.any(AbortSignal));
+  await user.type(screen.getByRole("textbox", { name: "Question" }), " updated");
+  expect(screen.getByText(/previous submission/)).toBeInTheDocument();
+});
+it("Demo comes only from capabilities; it has no CSV input or editable threshold", async () => {
+  vi.mocked(api.connect).mockResolvedValue(demo);
+  const user = userEvent.setup(); render(<ReviewRoom />);
+  await screen.findByText("PUBLIC DEMO");
+  expect(screen.queryByRole("spinbutton", { name: "Pass threshold" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Batch Review/ }));
+  expect(screen.queryByLabelText("Upload CSV")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /Run 100-response benchmark/ }));
+  await screen.findByText("The results are in.");
+  expect(api.benchmark).toHaveBeenCalledWith(expect.any(AbortSignal));
+  expect(api.batch).not.toHaveBeenCalled();
+});
+it("Demo single review uses the real request path with the fixed threshold", async () => {
+  vi.mocked(api.connect).mockResolvedValue(demo);
+  const user = userEvent.setup(); render(<ReviewRoom />); await screen.findByText("PUBLIC DEMO");
+  fireEvent.change(screen.getByRole("textbox", { name: "Question" }), { target: { value: "q" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Model response" }), { target: { value: "a" } });
+  await user.click(screen.getByRole("button", { name: "Evaluate response" }));
+  await waitFor(() => expect(api.evaluate).toHaveBeenCalledWith(expect.objectContaining({ pass_threshold: 70 }), expect.any(AbortSignal)));
+});
+it("Local Mode uploads a CSV and displays validation findings", async () => {
+  const user = userEvent.setup(); render(<ReviewRoom />); await screen.findByText("LOCAL MODE");
+  await user.click(screen.getByRole("button", { name: /Batch Review/ }));
+  const file = new File(["question,answer\nq,a\n"], "collection.csv", { type: "text/csv" });
+  await user.upload(screen.getByLabelText("Upload CSV"), file);
+  await user.click(screen.getByRole("button", { name: "Evaluate CSV" }));
+  await screen.findByText("The results are in.");
+  expect(api.batch).toHaveBeenCalledWith(file, 70, expect.any(AbortSignal));
+  await user.click(screen.getByText("Review 1 excluded rows"));
+  expect(screen.getByText("Empty required value(s): answer")).toBeVisible();
+});
+it("keeps the custom intake keyboard accessible and can reselect a removed file", async () => {
+  const user = userEvent.setup(); render(<ReviewRoom />); await screen.findByText("LOCAL MODE");
+  await user.click(screen.getByRole("button", { name: /Batch Review/ }));
+  const input = screen.getByLabelText("Upload CSV");
+  screen.getByRole("link", { name: /Download a sample CSV/ }).focus();
+  await user.tab();
+  expect(input).toHaveFocus();
+  expect(input).toHaveAccessibleDescription("Choose a CSV or drop it into this folder.");
+  const file = new File(["question,answer\nq,a\n"], "collection.csv", { type: "text/csv" });
+  await user.upload(input, file);
+  expect(input).toHaveAccessibleDescription(/Ready to review/);
+  expect(screen.getByText("collection.csv")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Remove file" }));
+  expect(input).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Evaluate CSV" })).toBeDisabled();
+  await user.upload(input, file);
+  await user.click(screen.getByRole("button", { name: "Evaluate CSV" }));
+  await screen.findByText("The results are in.");
+  expect(api.batch).toHaveBeenCalledWith(file, 70, expect.any(AbortSignal));
+});
+it("retains drag and drop on the paper folder", async () => {
+  const user = userEvent.setup(); render(<ReviewRoom />); await screen.findByText("LOCAL MODE");
+  await user.click(screen.getByRole("button", { name: /Batch Review/ }));
+  const file = new File(["question,answer\nq,a\n"], "dropped.csv", { type: "text/csv" });
+  const folder = screen.getByLabelText("Upload CSV").closest(".file-pocket")!;
+  fireEvent.dragOver(folder);
+  fireEvent.drop(folder, { dataTransfer: { files: [file] } });
+  expect(screen.getByText("dropped.csv")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Evaluate CSV" }));
+  await screen.findByText("The results are in.");
+  expect(api.batch).toHaveBeenCalledWith(file, 70, expect.any(AbortSignal));
+});
+it("filters the register, sorts quality and opens an inline dossier", async () => {
+  const user = userEvent.setup(); render(<BatchReport result={batch} />);
+  await user.selectOptions(screen.getByLabelText("Verdict"), "Fail");
+  expect(screen.queryByRole("button", { name: /How long is the return/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /How often are backups/ }));
+  const dossier = screen.getByRole("region", { name: "Review dossier ER-002" });
+  expect(within(dossier).getByText("12 hours")).toBeInTheDocument();
+  expect(within(dossier).getByText(batch.rows[1].improvement_feedback)).toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Verdict"), "All");
+  await user.selectOptions(screen.getByLabelText("Order"), "low");
+  const register = screen.getByRole("table", { name: /Evaluated responses/ });
+  expect(within(register).getAllByRole("row")[1]).toHaveTextContent("ER-002");
+  await user.type(screen.getByPlaceholderText("Search question, response or ID"), "no matching item");
+  expect(screen.getByText("No responses match this view.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByText("2 of 2 responses")).toBeInTheDocument();
+});
+it("exports exactly the backend CSV", async () => {
+  const createObjectURL = vi.fn().mockReturnValue("blob:review");
+  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const user = userEvent.setup(); render(<BatchReport result={batch} />);
+  await user.click(screen.getByRole("button", { name: /Export reviewed CSV/ }));
+  expect(click).toHaveBeenCalled();
+  const blob = createObjectURL.mock.calls[0][0] as Blob;
+  const text = await new Promise<string>(resolve => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.readAsText(blob); });
+  expect(text).toBe(batch.evaluated_csv);
+});
+it("shows empty results without inventing summary values", () => {
+  render(<BatchReport result={{ ...batch, rows: [] }} />);
+  expect(screen.getByText("The review register is empty.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Export/ })).not.toBeInTheDocument();
+});
+it("renders safe evaluation and malformed CSV errors", async () => {
+  vi.mocked(api.batch).mockRejectedValue(new ReviewError("invalid_csv"));
+  const user = userEvent.setup(); render(<ReviewRoom />); await screen.findByText("LOCAL MODE");
+  await user.click(screen.getByRole("button", { name: /Batch Review/ }));
+  await user.upload(screen.getByLabelText("Upload CSV"), new File(["bad"], "bad.csv", { type: "text/csv" }));
+  await user.click(screen.getByRole("button", { name: "Evaluate CSV" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("UTF-8 CSV");
+  expect(screen.queryByText("The results are in.")).not.toBeInTheDocument();
+});
+it("shows connecting then unavailable and supports reconnect", async () => {
+  let reject!: (reason: unknown) => void;
+  vi.mocked(api.connect).mockReturnValueOnce(new Promise((_, rejectPromise) => { reject = rejectPromise; }));
+  const user = userEvent.setup(); render(<ReviewRoom />);
+  expect(screen.getByRole("status")).toHaveTextContent("Connecting to the evaluator");
+  await act(async () => reject(new ReviewError("backend_unavailable")));
+  expect(screen.getByRole("alert")).toHaveTextContent("review service is unavailable");
+  await user.click(screen.getByRole("button", { name: /Reconnect/ }));
+  await screen.findByText("LOCAL MODE");
+});
+it("disables duplicate benchmark requests while processing", async () => {
+  vi.mocked(api.connect).mockResolvedValue(demo);
+  let resolve!: (value: typeof batch) => void;
+  vi.mocked(api.benchmark).mockReturnValueOnce(new Promise(resolvePromise => { resolve = resolvePromise; }));
+  const user = userEvent.setup(); render(<ReviewRoom />); await screen.findByText("PUBLIC DEMO");
+  await user.click(screen.getByRole("button", { name: /Batch Review/ }));
+  await user.click(screen.getByRole("button", { name: /Run 100-response benchmark/ }));
+  expect(screen.getByRole("button", { name: /Reviewing 100 responses/ })).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Reading. Comparing. Reviewing.");
+  await act(async () => resolve(batch));
+  await screen.findByText("The results are in.");
+});
