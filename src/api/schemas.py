@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
 
@@ -54,6 +54,21 @@ class CapabilitiesResponse(BaseModel):
     result_columns: list[str]
     error_types: list[str]
     nullable_metrics: list[str]
+    app_mode: Literal["demo", "local"]
+    csv_upload_allowed: bool
+    threshold_editable: bool
+    demo_pass_threshold: int
+    benchmark: "BenchmarkInfo"
+
+
+class BenchmarkInfo(BaseModel):
+    id: str
+    title: str
+    row_count: int
+
+
+class BenchmarkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class BatchValidation(BaseModel):

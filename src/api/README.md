@@ -25,6 +25,15 @@ OpenAPI is available at `/openapi.json`; interactive docs are at `/docs`.
 | `GET /capabilities` | None | Supported operations, evaluator mode/version, configuration/defaults, CSV fields, result fields, nullable metrics, error types, cache/download behavior |
 | `POST /evaluate` | JSON object | Original evaluation result fields, without an envelope |
 | `POST /evaluate/batch` | Multipart `file`, optional `pass_threshold` form field | `columns`, `rows`, `validation`, `invalid_rows`, `summary`, `evaluated_csv` |
+| `POST /evaluate/benchmark` | No body or `{}` | Same batch response, from the fixed 100-row repository benchmark |
+
+The API now resolves `APP_MODE` from the environment at service startup (default
+`local`); this does not change Streamlit's mode resolver. Capabilities includes
+`app_mode`, `csv_upload_allowed`, `threshold_editable`, `demo_pass_threshold`, and
+`benchmark` metadata. Public Demo allows free-form single evaluations at threshold
+70, rejects CSV uploads before multipart parsing, and allows the fixed benchmark.
+Local Mode retains the existing single and CSV behavior. Benchmark overrides are
+rejected. See `frontend/README.md` for the complete EVALROOM setup.
 
 Single request example:
 
@@ -111,6 +120,7 @@ stack traces, or internal filesystem paths:
 | HTTP status | Error codes |
 | --- | --- |
 | 422 | `invalid_request`, `invalid_csv`, `invalid_csv_schema`, `missing_csv_columns`, `no_valid_rows` |
+| 403 | `demo_restricted` (CSV upload or threshold changes in Public Demo) |
 | 503 | `evaluation_failed` (the evaluator or model could not complete the request) |
 | 500 | `internal_error` (unexpected application/serialization failure) |
 | Other HTTP failures, such as 400/404/405 | `http_error` |

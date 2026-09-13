@@ -251,7 +251,7 @@ def test_unexpected_failure_is_safe(client, service, monkeypatch):
 
 def test_openapi_documents_nullable_result_and_batch_upload(client):
     schema = client.get("/openapi.json").json()
-    assert set(schema["paths"]) == {"/health", "/capabilities", "/evaluate", "/evaluate/batch"}
+    assert set(schema["paths"]) == {"/health", "/capabilities", "/evaluate", "/evaluate/batch", "/evaluate/benchmark"}
     result = schema["components"]["schemas"]["EvaluationResult"]
     assert {"type": "null"} in result["properties"]["correctness_score"]["anyOf"]
     request = schema["components"]["schemas"]["EvaluationRequest"]

@@ -39,7 +39,7 @@ def factory(scorer):
 
 @pytest.fixture
 def service(factory):
-    return EvaluationService(factory)
+    return EvaluationService(factory, app_mode="local")
 
 
 @pytest.fixture

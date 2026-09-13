@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 
 from src.api.schemas import (
     BatchResponse,
+    BenchmarkRequest,
     CapabilitiesResponse,
     ErrorResponse,
     EvaluationRequest,
@@ -47,9 +48,19 @@ def create_app(service: EvaluationService | None = None) -> FastAPI:
     app = FastAPI(title=APP_NAME, version=EVALUATOR_VERSION, debug=False)
     app.state.evaluation_service = service if service is not None else EvaluationService()
 
+    @app.middleware("http")
+    async def reject_demo_upload_before_parsing(request: Request, call_next):
+        # Reject before multipart parsing can spool a visitor's file to disk.
+        if request.method == "POST" and request.url.path.rstrip("/") == "/evaluate/batch":
+            try:
+                request.app.state.evaluation_service.require_csv_upload()
+            except ApplicationError as exc:
+                return error_response(403, exc.code, exc.message, exc.details)
+        return await call_next(request)
+
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError):
-        status = 503 if exc.code == "evaluation_failed" else 422
+        status = {"evaluation_failed": 503, "demo_restricted": 403}.get(exc.code, 422)
         return error_response(status, exc.code, exc.message, exc.details)
 
     @app.exception_handler(RequestValidationError)
@@ -80,7 +91,11 @@ def create_app(service: EvaluationService | None = None) -> FastAPI:
     def capabilities(request: Request) -> dict[str, object]:
         return request.app.state.evaluation_service.capabilities()
 
-    errors = {422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 500: {"model": ErrorResponse}}
+    errors = {403: {"model": ErrorResponse}, 422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 500: {"model": ErrorResponse}}
+
+    @app.post("/evaluate/benchmark", response_model=BatchResponse, responses=errors)
+    def benchmark(request: Request, payload: BenchmarkRequest = Body(default=BenchmarkRequest())):
+        return request.app.state.evaluation_service.evaluate_benchmark().to_dict()
 
     @app.post("/evaluate", response_model=EvaluationResult, responses=errors)
     def evaluate(payload: EvaluationRequest, request: Request):

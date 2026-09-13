@@ -9,8 +9,10 @@ continues to cache model weights and load from disk before trying a download.
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
@@ -107,7 +109,10 @@ class EvaluationService:
     def __init__(
         self,
         evaluator_factory: Callable[[int | float], OfflineHybridEvaluator] | None = None,
+        app_mode: str | None = None,
     ) -> None:
+        configured_mode = os.getenv("APP_MODE", "local") if app_mode is None else app_mode
+        self.app_mode = "demo" if configured_mode.strip().lower() == "demo" else "local"
         self._evaluator_factory = evaluator_factory or (
             lambda threshold: OfflineHybridEvaluator(pass_threshold=threshold)
         )
@@ -132,6 +137,11 @@ class EvaluationService:
             "evaluator_version": EVALUATOR_VERSION,
             "single_evaluation": True,
             "batch_csv_evaluation": True,
+            "app_mode": self.app_mode,
+            "csv_upload_allowed": self.app_mode == "local",
+            "threshold_editable": self.app_mode == "local",
+            "demo_pass_threshold": DEFAULT_PASS_THRESHOLD,
+            "benchmark": {"id": "evalroom-100-v1", "title": "Demo Benchmark", "row_count": 100},
             "offline_first": True,
             "model_download_on_cache_miss": True,
             "configuration": self.configuration(),
@@ -154,6 +164,8 @@ class EvaluationService:
         pass_threshold: int | float = DEFAULT_PASS_THRESHOLD,
     ) -> dict[str, object]:
         validate_threshold(pass_threshold)
+        if self.app_mode == "demo" and pass_threshold != DEFAULT_PASS_THRESHOLD:
+            raise ApplicationError("demo_restricted", "Public Demo uses the fixed threshold of 70.")
         for field, value in (
             ("question", question), ("answer", answer),
             ("expected_answer", expected_answer), ("context", context),
@@ -175,6 +187,23 @@ class EvaluationService:
 
     def evaluate_csv(
         self, content: bytes, pass_threshold: int | float = DEFAULT_PASS_THRESHOLD
+    ) -> BatchEvaluationResult:
+        self.require_csv_upload()
+        return self._evaluate_csv(content, pass_threshold)
+
+    def require_csv_upload(self) -> None:
+        if self.app_mode == "demo":
+            raise ApplicationError(
+                "demo_restricted", "CSV upload is available in Local Mode. Use the Demo Benchmark in Public Demo."
+            )
+
+    def evaluate_benchmark(self) -> BatchEvaluationResult:
+        """Only this fixed repository asset can be evaluated as the benchmark."""
+        benchmark_path = Path(__file__).resolve().parents[2] / "data" / "demo_benchmark.csv"
+        return self._evaluate_csv(benchmark_path.read_bytes(), DEFAULT_PASS_THRESHOLD)
+
+    def _evaluate_csv(
+        self, content: bytes, pass_threshold: int | float
     ) -> BatchEvaluationResult:
         validate_threshold(pass_threshold)
         if not isinstance(content, bytes):
