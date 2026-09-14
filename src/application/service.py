@@ -18,6 +18,7 @@ from threading import Event, Lock
 import pandas as pd
 
 from src.application.serialization import serialize_result, serialize_rows
+from src.application.memory_diagnostics import log_rss
 from src.config.settings import (
     APP_NAME,
     DEFAULT_MODEL_NAME,
@@ -31,6 +32,7 @@ from src.config.settings import (
     REQUIRED_COLUMNS,
 )
 from src.evaluators.hybrid import OfflineHybridEvaluator
+from src.evaluators.embedding_backend import create_semantic_scorer
 from src.evaluators.semantic import SentenceTransformerScorer
 from src.ingestion.csv_validator import (
     CsvValidationResult,
@@ -116,7 +118,9 @@ class EvaluationService:
         configured_mode = os.getenv("APP_MODE", "local") if app_mode is None else app_mode
         self.app_mode = "demo" if configured_mode.strip().lower() == "demo" else "local"
         self._evaluator_factory = evaluator_factory or (
-            lambda threshold: OfflineHybridEvaluator(pass_threshold=threshold)
+            lambda threshold: OfflineHybridEvaluator(
+                semantic_scorer=create_semantic_scorer(self.app_mode), pass_threshold=threshold
+            )
         )
         self._state_lock = Lock()
         self._evaluation_lock = Lock()
@@ -132,11 +136,13 @@ class EvaluationService:
                 return
             self._initialization_started = True
         try:
+            log_rss("before initialization")
             evaluator = self._evaluator_factory(DEFAULT_PASS_THRESHOLD)
             scorer = evaluator.semantic_scorer
             if isinstance(scorer, SentenceTransformerScorer):
                 # Force both weight loading and a real forward pass before ready.
                 scorer.model.encode(["Evaluator warmup."], normalize_embeddings=True)
+            log_rss("after warmup")
             with self._state_lock:
                 self._evaluator = evaluator
                 self._status = "ready"
