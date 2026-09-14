@@ -1,7 +1,7 @@
 import { errorMessages } from "./errors";
 
 const routes: Record<string, string> = {
-  health: "GET", capabilities: "GET", evaluate: "POST", "evaluate/batch": "POST", "evaluate/benchmark": "POST",
+  health: "GET", ready: "GET", capabilities: "GET", evaluate: "POST", "evaluate/batch": "POST", "evaluate/benchmark": "POST",
 };
 function failure(status: number, code: string) {
   return Response.json({ error: { code, message: errorMessages[code] ?? errorMessages.http_error, details: {} } },
@@ -24,7 +24,7 @@ export async function proxyRequest(request: Request, path: string): Promise<Resp
       headers: request.headers.has("content-type") ? { "Content-Type": request.headers.get("content-type")! } : {},
       body: request.method === "POST" ? await request.arrayBuffer() : undefined,
       cache: "no-store", redirect: "error",
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeout)]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(request.method === "GET" ? Math.min(timeout, 15000) : timeout)]),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => null);

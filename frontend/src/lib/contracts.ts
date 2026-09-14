@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+export const readinessSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("warming") }),
+  z.object({ status: z.literal("ready") }),
+  z.object({ status: z.literal("error"), message: z.string() }),
+]);
+
 export const metricKeys = ["correctness_score", "relevance_score", "groundedness_score", "completeness_score"] as const;
 export type MetricKey = typeof metricKeys[number];
 export const metricLabels: Record<MetricKey, string> = {

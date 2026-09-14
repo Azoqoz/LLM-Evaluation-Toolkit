@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
+from threading import Thread
 from typing import Annotated
 
 from fastapi import Body, FastAPI, File, Form, Request, UploadFile
@@ -17,6 +19,7 @@ from src.api.schemas import (
     ErrorResponse,
     EvaluationRequest,
     HealthResponse,
+    ReadinessResponse,
 )
 from src.application.service import ApplicationError, EvaluationService, validate_threshold
 from src.config.settings import APP_NAME, DEFAULT_PASS_THRESHOLD, EVALUATOR_VERSION
@@ -45,7 +48,17 @@ def parse_form_threshold(value: str) -> int | float:
 
 
 def create_app(service: EvaluationService | None = None) -> FastAPI:
-    app = FastAPI(title=APP_NAME, version=EVALUATOR_VERSION, debug=False)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Do not await imports, weights, download, or inference before binding.
+        worker = Thread(target=app.state.evaluation_service.initialize,
+                        name="evaluator-warmup", daemon=True)
+        app.state.warmup_thread = worker
+        worker.start()
+        yield
+        # The process owns the model. A stuck download must not block shutdown.
+
+    app = FastAPI(title=APP_NAME, version=EVALUATOR_VERSION, debug=False, lifespan=lifespan)
     app.state.evaluation_service = service if service is not None else EvaluationService()
 
     @app.middleware("http")
@@ -56,11 +69,19 @@ def create_app(service: EvaluationService | None = None) -> FastAPI:
                 request.app.state.evaluation_service.require_csv_upload()
             except ApplicationError as exc:
                 return error_response(403, exc.code, exc.message, exc.details)
+        if request.method == "POST" and request.url.path.rstrip("/") in {
+            "/evaluate", "/evaluate/batch", "/evaluate/benchmark",
+        }:
+            try:
+                request.app.state.evaluation_service.require_ready()
+            except ApplicationError as exc:
+                return error_response(503, exc.code, exc.message)
         return await call_next(request)
 
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError):
-        status = {"evaluation_failed": 503, "demo_restricted": 403}.get(exc.code, 422)
+        status = {"evaluation_failed": 503, "evaluator_warming": 503,
+                  "evaluator_unavailable": 503, "demo_restricted": 403}.get(exc.code, 422)
         return error_response(status, exc.code, exc.message, exc.details)
 
     @app.exception_handler(RequestValidationError)
@@ -84,8 +105,13 @@ def create_app(service: EvaluationService | None = None) -> FastAPI:
         return error_response(500, "internal_error", "The request could not be completed.")
 
     @app.get("/health", response_model=HealthResponse)
-    def health(request: Request):
+    async def health(request: Request):
         return request.app.state.evaluation_service.health()
+
+    @app.get("/ready", response_model=ReadinessResponse, response_model_exclude_none=True)
+    async def ready(request: Request):
+        return JSONResponse(request.app.state.evaluation_service.readiness(),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/capabilities", response_model=CapabilitiesResponse)
     def capabilities(request: Request) -> dict[str, object]:

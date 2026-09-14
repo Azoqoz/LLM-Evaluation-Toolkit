@@ -39,7 +39,11 @@ def factory(scorer):
 
 @pytest.fixture
 def service(factory):
-    return EvaluationService(factory, app_mode="local")
+    service = EvaluationService(factory, app_mode="local")
+    service.initialize()
+    assert service.readiness() == {"status": "ready"}
+    factory.reset_mock()  # Existing assertions concern request-time construction.
+    return service
 
 
 @pytest.fixture

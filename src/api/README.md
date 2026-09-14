@@ -11,9 +11,7 @@ The existing `app.py` still starts Streamlit and is unchanged. The new API uses
 `src.application.service.EvaluationService`, which imports neither FastAPI nor
 Streamlit and can also be called from Python. Its operations are `health()`,
 `capabilities()`, `configuration()`, `evaluate(...)`, and `evaluate_csv(...)`.
-An optional evaluator factory allows dependency injection. Each operation gets
-its own evaluator/threshold; the original embedding loader retains its model
-cache. Evaluation remains synchronous and uses the existing scoring pipeline.
+An optional evaluator factory allows dependency injection. Startup initializes one evaluator and warms its model in a background thread. Operations reuse it under a lock, restoring the threshold after each operation. Direct Python callers must explicitly call initialize() and confirm readiness() before evaluating. Evaluation uses the unchanged scoring pipeline.
 
 OpenAPI is available at `/openapi.json`; interactive docs are at `/docs`.
 
@@ -22,6 +20,7 @@ OpenAPI is available at `/openapi.json`; interactive docs are at `/docs`.
 | Endpoint | Request | Success response |
 | --- | --- | --- |
 | `GET /health` | None | `status: "ok"`, `evaluator_version` (liveness only) |
+| `GET /ready` | None | Uncached `warming`, `ready`, or safe `error` status |
 | `GET /capabilities` | None | Supported operations, evaluator mode/version, configuration/defaults, CSV fields, result fields, nullable metrics, error types, cache/download behavior |
 | `POST /evaluate` | JSON object | Original evaluation result fields, without an envelope |
 | `POST /evaluate/batch` | Multipart `file`, optional `pass_threshold` form field | `columns`, `rows`, `validation`, `invalid_rows`, `summary`, `evaluated_csv` |
@@ -121,7 +120,7 @@ stack traces, or internal filesystem paths:
 | --- | --- |
 | 422 | `invalid_request`, `invalid_csv`, `invalid_csv_schema`, `missing_csv_columns`, `no_valid_rows` |
 | 403 | `demo_restricted` (CSV upload or threshold changes in Public Demo) |
-| 503 | `evaluation_failed` (the evaluator or model could not complete the request) |
+| 503 | `evaluator_warming`, `evaluator_unavailable`, `evaluation_failed` |
 | 500 | `internal_error` (unexpected application/serialization failure) |
 | Other HTTP failures, such as 400/404/405 | `http_error` |
 
@@ -131,10 +130,7 @@ the batch, with no partial results returned.
 
 ## Current limits
 
-Health checks are liveness probes, not model-readiness checks. Real model scoring
-needs cached `sentence-transformers/all-MiniLM-L6-v2` weights or the original
-first-use download; network-free startup and probes do not prove those weights
-are available. The backend retains the original offline-first behavior.
+Health checks remain liveness probes. Use `/ready` to distinguish warm-up, readiness, and initialization failure. See [production startup](STARTUP.md) for build prefetch, Render commands, and retry behavior.
 
 Requests use worker threads; rows within a batch remain sequential. CSV parsing
 and results are held in memory, and returning JSON plus CSV increases payload

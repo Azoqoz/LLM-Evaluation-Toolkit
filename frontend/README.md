@@ -67,8 +67,8 @@ quality. Response-style labels describe author intent, not expected verdicts.
 - `tests`: component interactions, mode behavior, request/response contracts,
   CSV export, and proxy integration. Mock responses exist only under `tests`.
 
-The proxy allowlist is `GET /health`, `GET /capabilities`, `POST /evaluate`,
-`POST /evaluate/batch`, and `POST /evaluate/benchmark`. The first four retain the
+The proxy allowlist is `GET /health`, `GET /ready`, `GET /capabilities`, `POST /evaluate`,
+`POST /evaluate/batch`, and `POST /evaluate/benchmark`. The evaluation routes retain the
 existing API contracts; capabilities adds mode policy and benchmark metadata.
 Benchmark returns the existing batch response schema. Only a missing/empty JSON
 body is accepted by the benchmark operation.
@@ -80,10 +80,7 @@ Use a persistent Python process with sufficient memory and cached model weights.
 Deploying the frontend alone does not host the evaluator. The proxy assumes the
 configured URL points to this trusted backend, not a user-selected destination.
 
-Health is a liveness check, so the UI says the review service is connected rather
-than claiming model readiness. Model weights still load locally first and may
-download on first use if absent. Benchmarks execute through the same sequential
-pipeline on each run. Timestamps remain the evaluator's timestamps.
+Health is a liveness check. After connecting, the desk polls `/ready` every two seconds while warming and disables single, CSV, and benchmark evaluation until ready. Network failures retry; terminal initialization errors stop polling and offer an explicit readiness recheck. No initialization is triggered by evaluation. See [production startup](../src/api/STARTUP.md) for model prefetch and Render commands. Batch rows remain sequential, and timestamps remain evaluator timestamps.
 
 Finite scores are displayed to at most two decimals; their values and the
 backend-exported CSV are unchanged. Null scores display N/A. Histogram bins and

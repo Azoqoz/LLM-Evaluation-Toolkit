@@ -27,6 +27,11 @@ class HealthResponse(BaseModel):
     evaluator_version: str
 
 
+class ReadinessResponse(BaseModel):
+    status: Literal["warming", "ready", "error"]
+    message: str | None = None
+
+
 class ThresholdRange(BaseModel):
     minimum: int
     maximum: int

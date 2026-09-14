@@ -1,9 +1,8 @@
 """Application orchestration; no HTTP or Streamlit dependencies.
 
 The original evaluator, validator, batch loop, summary and exporter remain the
-source of behavior. A new evaluator is created for each operation so concurrent
-requests never mutate a shared pass threshold. The existing embedding loader
-continues to cache model weights and load from disk before trying a download.
+source of behavior. Explicit startup initializes one evaluator; operations reuse
+it under a lock so thresholds and inference cannot race between requests.
 """
 
 from __future__ import annotations
@@ -12,7 +11,9 @@ import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Event, Lock
 
 import pandas as pd
 
@@ -30,6 +31,7 @@ from src.config.settings import (
     REQUIRED_COLUMNS,
 )
 from src.evaluators.hybrid import OfflineHybridEvaluator
+from src.evaluators.semantic import SentenceTransformerScorer
 from src.ingestion.csv_validator import (
     CsvValidationResult,
     read_csv_bytes,
@@ -116,6 +118,59 @@ class EvaluationService:
         self._evaluator_factory = evaluator_factory or (
             lambda threshold: OfflineHybridEvaluator(pass_threshold=threshold)
         )
+        self._state_lock = Lock()
+        self._evaluation_lock = Lock()
+        self._initialization_started = False
+        self._initialization_finished = Event()
+        self._status = "warming"
+        self._evaluator = None
+
+    def initialize(self) -> None:
+        """Called by startup only. Concurrent/repeated calls never reload."""
+        with self._state_lock:
+            if self._initialization_started:
+                return
+            self._initialization_started = True
+        try:
+            evaluator = self._evaluator_factory(DEFAULT_PASS_THRESHOLD)
+            scorer = evaluator.semantic_scorer
+            if isinstance(scorer, SentenceTransformerScorer):
+                # Force both weight loading and a real forward pass before ready.
+                scorer.model.encode(["Evaluator warmup."], normalize_embeddings=True)
+            with self._state_lock:
+                self._evaluator = evaluator
+                self._status = "ready"
+        except Exception:
+            with self._state_lock:
+                self._status = "error"
+        finally:
+            self._initialization_finished.set()
+
+    def readiness(self) -> dict[str, str]:
+        with self._state_lock:
+            if self._status == "error":
+                return {"status": "error", "message": "Evaluator initialization failed."}
+            return {"status": self._status}
+
+    def require_ready(self) -> None:
+        status = self.readiness()["status"]
+        if status != "ready":
+            raise ApplicationError(
+                "evaluator_unavailable" if status == "error" else "evaluator_warming",
+                "Evaluator initialization failed." if status == "error" else "Preparing evaluator.",
+            )
+
+    @contextmanager
+    def _use_evaluator(self, threshold):
+        self.require_ready()
+        with self._evaluation_lock:
+            evaluator = self._evaluator
+            previous = evaluator.pass_threshold
+            evaluator.pass_threshold = threshold
+            try:
+                yield evaluator
+            finally:
+                evaluator.pass_threshold = previous
 
     def health(self) -> dict[str, str]:
         """Liveness only; do not load or claim readiness of the model."""
@@ -176,10 +231,11 @@ class EvaluationService:
                     {"field": field},
                 )
         try:
-            result = self._evaluator_factory(pass_threshold).evaluate(
-                question, answer, expected_answer, context
-            )
+            with self._use_evaluator(pass_threshold) as evaluator:
+                result = evaluator.evaluate(question, answer, expected_answer, context)
             return serialize_result(result)
+        except ApplicationError:
+            raise
         except Exception as exc:
             raise ApplicationError(
                 "evaluation_failed", "The local evaluator could not complete the evaluation."
@@ -232,9 +288,10 @@ class EvaluationService:
                 "no_valid_rows", "The CSV has no valid rows to evaluate.", metadata
             )
         try:
-            results = evaluate_batch(
-                validation.valid_data, self._evaluator_factory(pass_threshold)
-            )
+            with self._use_evaluator(pass_threshold) as evaluator:
+                results = evaluate_batch(validation.valid_data, evaluator)
+        except ApplicationError:
+            raise
         except Exception as exc:
             raise ApplicationError(
                 "evaluation_failed", "The local evaluator could not complete the evaluation."

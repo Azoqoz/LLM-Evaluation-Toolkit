@@ -54,8 +54,8 @@ def test_serialization_preserves_precision_nulls_and_source():
     pd.testing.assert_frame_equal(original, copy)
 
 
-def test_default_service_can_evaluate_empty_text_without_loading_weights():
-    result = EvaluationService().evaluate(None, "")
+def test_initialized_service_evaluates_empty_text_without_loading_weights(service):
+    result = service.evaluate(None, "")
     assert (result["quality_score"], result["error_type"]) == (0, "Empty Answer")
 
 

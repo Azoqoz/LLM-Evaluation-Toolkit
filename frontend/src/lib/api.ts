@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { batchSchema, capabilitiesSchema, resultSchema, type EvaluationInput } from "./contracts";
+import { batchSchema, capabilitiesSchema, readinessSchema, resultSchema, type EvaluationInput } from "./contracts";
 import { ReviewError } from "./errors";
 
 async function request<T>(path: string, schema: z.ZodType<T>, options: RequestInit = {}): Promise<T> {
@@ -20,6 +20,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
   return parsed.data;
 }
 export const api = {
+  ready: (signal?: AbortSignal) => request("ready", readinessSchema, { signal }),
   connect: async (signal?: AbortSignal) => {
     const [, capabilities] = await Promise.all([
       request("health", z.object({ status: z.literal("ok"), evaluator_version: z.string() }), { signal }),

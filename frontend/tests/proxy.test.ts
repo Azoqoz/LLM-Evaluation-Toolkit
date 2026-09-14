@@ -3,6 +3,15 @@ import { expect, it, vi } from "vitest";
 import { proxyRequest } from "@/lib/proxy";
 import { result } from "./fixtures";
 
+it("forwards readiness without caching and preserves terminal status", async () => {
+  const fetch = vi.fn().mockResolvedValue(Response.json({ status: "error", message: "Evaluator initialization failed." }));
+  vi.stubGlobal("fetch", fetch);
+  const response = await proxyRequest(new Request("http://desk/api/ready"), "ready");
+  expect(await response.json()).toEqual({ status: "error", message: "Evaluator initialization failed." });
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(fetch.mock.calls[0][0]).toMatch(/\/ready$/);
+});
+
 it("forwards only the fixed endpoint to the server-only backend", async () => {
   vi.stubEnv("EVALUATION_API_URL", "http://backend:8000");
   const fetch = vi.fn().mockResolvedValue(Response.json(result)); vi.stubGlobal("fetch", fetch);

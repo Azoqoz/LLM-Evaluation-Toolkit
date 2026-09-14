@@ -21,7 +21,7 @@ def test_environment_mode(monkeypatch, mode, expected):
 
 @pytest.mark.parametrize("mode", ["demo", "local"])
 def test_mode_capabilities(factory, mode):
-    with TestClient(create_app(EvaluationService(factory, app_mode=mode))) as client:
+    with TestClient(create_app(ready_service(factory, app_mode=mode))) as client:
         body = client.get("/capabilities").json()
     assert body["app_mode"] == mode
     assert body["csv_upload_allowed"] is (mode == "local")
@@ -31,7 +31,7 @@ def test_mode_capabilities(factory, mode):
 
 
 def test_demo_single_is_real_and_threshold_is_fixed(factory, scorer):
-    service = EvaluationService(factory, app_mode="demo")
+    service = ready_service(factory, app_mode="demo")
     with TestClient(create_app(service)) as client:
         result = client.post("/evaluate", json={"question": "query", "answer": "alpha beta gamma delta epsilon"})
         assert result.status_code == 200
@@ -47,7 +47,7 @@ def test_demo_upload_rejected_before_multipart_parsing(factory, monkeypatch):
     async def forbid_form(*args, **kwargs):
         raise AssertionError("A demo upload must never be parsed")
     monkeypatch.setattr(Request, "_get_form", forbid_form)
-    service = EvaluationService(factory, app_mode="demo")
+    service = ready_service(factory, app_mode="demo")
     with TestClient(create_app(service)) as client:
         for path in ["/evaluate/batch", "/evaluate/batch/"]:
             response = client.post(path, files={"file": ("replacement.csv", b"question,answer\nq,a\n")})
@@ -68,7 +68,7 @@ def test_fixed_benchmark_is_valid_diverse_and_exactly_100_rows():
 
 
 def test_demo_benchmark_evaluates_every_row_and_keeps_schema(factory, scorer):
-    service = EvaluationService(factory, app_mode="demo")
+    service = ready_service(factory, app_mode="demo")
     with TestClient(create_app(service)) as client:
         response = client.post("/evaluate/benchmark")
         assert response.status_code == 200
@@ -85,7 +85,15 @@ def test_demo_benchmark_evaluates_every_row_and_keeps_schema(factory, scorer):
 
 
 def test_local_upload_remains_available(factory):
-    with TestClient(create_app(EvaluationService(factory, app_mode="local"))) as client:
+    with TestClient(create_app(ready_service(factory, app_mode="local"))) as client:
         response = client.post("/evaluate/batch", files={"file": ("cases.csv", b"question,answer\nq,alpha beta gamma delta epsilon\n")}, data={"pass_threshold": "80.01"})
         assert response.status_code == 200
         assert response.json()["rows"][0]["status"] == "Fail"
+
+
+def ready_service(factory, app_mode):
+    service = EvaluationService(factory, app_mode=app_mode)
+    service.initialize()
+    assert service.readiness() == {"status": "ready"}
+    factory.reset_mock()
+    return service

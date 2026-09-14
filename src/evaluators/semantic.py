@@ -8,6 +8,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from src.config.settings import DEFAULT_MODEL_NAME
+from src.config.model_cache import MODEL_CACHE_PATH
 
 
 class SemanticScorer(Protocol):
@@ -22,6 +23,10 @@ def _load_model(model_name: str) -> Any:
     """Load from the local cache first, downloading only when absent."""
 
     from sentence_transformers import SentenceTransformer
+
+    if model_name == DEFAULT_MODEL_NAME and MODEL_CACHE_PATH.exists():
+        # A present but broken artifact must fail safely, not download silently.
+        return SentenceTransformer(str(MODEL_CACHE_PATH), local_files_only=True)
 
     try:
         return SentenceTransformer(model_name, local_files_only=True)

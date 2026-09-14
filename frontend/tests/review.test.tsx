@@ -8,8 +8,8 @@ import { api } from "@/lib/api";
 import { ReviewError } from "@/lib/errors";
 import { batch, capabilities, demo, result } from "./fixtures";
 
-vi.mock("@/lib/api", () => ({ api: { connect: vi.fn(), evaluate: vi.fn(), batch: vi.fn(), benchmark: vi.fn() } }));
-beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.connect).mockResolvedValue(capabilities); vi.mocked(api.evaluate).mockResolvedValue(result); vi.mocked(api.batch).mockResolvedValue(batch); vi.mocked(api.benchmark).mockResolvedValue(batch); });
+vi.mock("@/lib/api", () => ({ api: { connect: vi.fn(), ready: vi.fn(), evaluate: vi.fn(), batch: vi.fn(), benchmark: vi.fn() } }));
+beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.ready).mockResolvedValue({ status: "ready" }); vi.mocked(api.connect).mockResolvedValue(capabilities); vi.mocked(api.evaluate).mockResolvedValue(result); vi.mocked(api.batch).mockResolvedValue(batch); vi.mocked(api.benchmark).mockResolvedValue(batch); });
 
 it.each(["Pass", "Fail"] as const)("renders the backend %s verdict and exact reviewer note", status => {
   render(<ReviewResult result={{ ...result, status }} />);

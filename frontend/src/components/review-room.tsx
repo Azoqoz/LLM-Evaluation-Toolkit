@@ -7,21 +7,26 @@ import { safeError } from "@/lib/errors";
 import { SingleReview } from "./single-review";
 import { BatchReview } from "./batch-review";
 import { Method } from "./method";
+import { useReadiness } from "@/lib/use-readiness";
 
 type Workspace = "single" | "batch" | "method";
 function ConnectedDesk({ capabilities, workspace }: { capabilities: Capabilities; workspace: Workspace }) {
+  const readiness = useReadiness();
+  const ready = readiness.state === "ready";
   const [threshold, setThreshold] = useState(capabilities.app_mode === "demo" ? capabilities.demo_pass_threshold : capabilities.configuration.default_pass_threshold);
   const [thresholdText, setThresholdText] = useState(String(threshold));
   const range = capabilities.configuration.pass_threshold;
   const valid = thresholdText.trim() !== "" && Number.isFinite(Number(thresholdText)) && Number(thresholdText) >= range.minimum && Number(thresholdText) <= range.maximum;
   return <>
     <div className="desk-instruments">
-      <p className="connection-caption"><span className="ink-dot" />Review service connected <span>{capabilities.evaluation_mode}</span></p>
+      <p className="connection-caption" aria-live="polite"><span className={ready ? "ink-dot" : readiness.state === "warming" ? "ink-loader" : undefined} aria-hidden />{ready ? "Evaluator ready" : readiness.state === "warming" ? "API connected · Preparing evaluator..." : "Evaluator unavailable"} <span>{capabilities.evaluation_mode}</span></p>
       {capabilities.threshold_editable ? <label className="threshold-dial">Pass threshold<input aria-label="Pass threshold" type="number" min={range.minimum} max={range.maximum} step="any" value={thresholdText} aria-invalid={!valid} onChange={e => { const next = e.target.value; setThresholdText(next); if (next.trim() !== "" && Number.isFinite(Number(next)) && Number(next) >= range.minimum && Number(next) <= range.maximum) setThreshold(Number(next)); }} onBlur={() => { if (!valid) setThresholdText(String(threshold)); }} /><span>/100</span></label> : <p className="threshold-fixed">Review standard <strong>{threshold}</strong><span>/100 · fixed</span></p>}
     </div>
+    {readiness.state === "error" && <div className="correction-note" role="alert"><p>Evaluator initialization failed. Check again after the service has restarted.</p><button className="margin-link" onClick={readiness.retry}>Check readiness again</button></div>}
+    {readiness.state === "unavailable" && <p className="pencil-note" role="status">Reconnecting to the API. It may be waking up. Evaluation will be available when readiness is confirmed.</p>}
     {!valid && <p role="alert" className="pencil-warning">Enter a threshold between {range.minimum} and {range.maximum}. Reviews currently use {threshold}.</p>}
-    <section hidden={workspace !== "single"} id="single-workspace" aria-label="Single Review"><SingleReview threshold={threshold} /></section>
-    <section hidden={workspace !== "batch"} id="batch-workspace" aria-label="Batch Review"><BatchReview capabilities={capabilities} threshold={threshold} /></section>
+    <section hidden={workspace !== "single"} id="single-workspace" aria-label="Single Review"><SingleReview threshold={threshold} ready={ready} onRequestError={readiness.onRequestError} /></section>
+    <section hidden={workspace !== "batch"} id="batch-workspace" aria-label="Batch Review"><BatchReview capabilities={capabilities} threshold={threshold} ready={ready} onRequestError={readiness.onRequestError} /></section>
     <section hidden={workspace !== "method"} id="method-workspace" aria-label="Method and scoring"><Method capabilities={capabilities} /></section>
   </>;
 }
@@ -33,8 +38,14 @@ export function ReviewRoom() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    api.connect(controller.signal).then(next => { if (!controller.signal.aborted) setCapabilities(next); }).catch(error => { if (!controller.signal.aborted) setError(safeError(error)); });
-    return () => controller.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    api.connect(controller.signal).then(next => { if (!controller.signal.aborted) setCapabilities(next); }).catch(error => {
+      if (!controller.signal.aborted) {
+        setError(safeError(error));
+        timer = setTimeout(() => setAttempt(current => current + 1), 2000);
+      }
+    });
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [attempt]);
   return <div className="paper-room">
     <a className="skip-link" href="#review-desk">Skip to review desk</a>

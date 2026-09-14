@@ -31,8 +31,12 @@ def test_health_is_liveness_without_evaluator_construction(client, factory):
     factory.assert_not_called()
 
 
-def test_default_app_probes_never_load_model():
-    with TestClient(create_app()) as client:
+def test_default_app_probes_survive_initialization_failure():
+    app = create_app()
+    with TestClient(app) as client:
+        # The offline fixture rejects real model loading; probes still work.
+        assert app.state.evaluation_service._initialization_finished.wait(2)
+        assert client.get("/ready").json()["status"] == "error"
         assert client.get("/health").status_code == 200
         assert client.get("/capabilities").status_code == 200
 
@@ -251,7 +255,7 @@ def test_unexpected_failure_is_safe(client, service, monkeypatch):
 
 def test_openapi_documents_nullable_result_and_batch_upload(client):
     schema = client.get("/openapi.json").json()
-    assert set(schema["paths"]) == {"/health", "/capabilities", "/evaluate", "/evaluate/batch", "/evaluate/benchmark"}
+    assert set(schema["paths"]) == {"/health", "/ready", "/capabilities", "/evaluate", "/evaluate/batch", "/evaluate/benchmark"}
     result = schema["components"]["schemas"]["EvaluationResult"]
     assert {"type": "null"} in result["properties"]["correctness_score"]["anyOf"]
     request = schema["components"]["schemas"]["EvaluationRequest"]
